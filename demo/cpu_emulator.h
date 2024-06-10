@@ -160,9 +160,9 @@ class cpu_emulator {
     }
 
   private:
-    static inline bus bus_{};
+    static inline cpu_bus bus_{};
     static inline cpu cpu_{bus_};
-    static inline char hex_bincode[bus::ram_size * 2]{};
+    static inline char hex_bincode[64 * 1024 * 2]{};
     static inline int ram_str_start;
     static inline std::string ram_str;  // 内存字符串
     static inline std::string reg_str;  // 寄存器字符串

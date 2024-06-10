@@ -1,5 +1,6 @@
 #pragma once
-#include <memory>
+#include <cstdint>
+#include <string>
 #include <vector>
 
 struct instruction;
@@ -23,9 +24,7 @@ class cpu {
     using addr_mode = void (cpu::*)(); // 寻址模式
 
   public:
-    explicit cpu(bus &b);
-
-    ~cpu() = default;
+    explicit cpu(bus &b) : bus_(b) {}
 
     // 指令
   public:
@@ -33,47 +32,47 @@ class cpu {
     auto LDA() -> void; // a = fetched
     auto LDX() -> void; // x = fetched
     auto LDY() -> void; // y = fetched
-    auto STA() -> void { write(addr_abs, r_a); }
-    auto STX() -> void { write(addr_abs, r_x); }
-    auto STY() -> void { write(addr_abs, r_y); }
+    auto STA() -> void { write(addr_, r_a_); }
+    auto STX() -> void { write(addr_, r_x_); }
+    auto STY() -> void { write(addr_, r_y_); }
 
     // 堆栈指令
-    auto PHA() -> void { stack_push(r_a); } // push a
-    auto PLA() -> void;                     // pull a
-    auto PHP() -> void { push_stat(); }     // push stat
-    auto PLP() -> void { pull_stat(); }     // pull stat
+    auto PHA() -> void { stack_push(r_a_); } // push a
+    auto PLA() -> void;                      // pull a
+    auto PHP() -> void { push_stat(); }      // push stat
+    auto PLP() -> void { pull_stat(); }      // pull stat
 
     // 传送指令
-    auto TSX() -> void;                // x = sp
-    auto TXS() -> void { r_sp = r_x; } // sp = x
-    auto TAX() -> void;                // x = a
-    auto TXA() -> void;                // a = x
-    auto TAY() -> void;                // y = a
-    auto TYA() -> void;                // a = y
+    auto TSX() -> void;                  // x = sp
+    auto TXS() -> void { r_sp_ = r_x_; } // sp = x
+    auto TAX() -> void;                  // x = a
+    auto TXA() -> void;                  // a = x
+    auto TAY() -> void;                  // y = a
+    auto TYA() -> void;                  // a = y
 
     // 流程控制
-    auto BMI() -> void { do_branch(r_stat.N); }  // if (n) then branch
-    auto BPL() -> void { do_branch(!r_stat.N); } // if (!n) then branch
-    auto BVS() -> void { do_branch(r_stat.V); }  // if (v) then branch
-    auto BVC() -> void { do_branch(!r_stat.V); } // if (!v) then branch
-    auto BEQ() -> void { do_branch(r_stat.Z); }  // if (z) then branch
-    auto BNE() -> void { do_branch(!r_stat.Z); } // if (!z) then branch
-    auto BCS() -> void { do_branch(r_stat.C); }  // if (c) then branch
-    auto BCC() -> void { do_branch(!r_stat.C); } // if (!c) then branch
-    auto JMP() -> void { r_pc = addr_abs; }      // 无条件跳转
-    auto JSR() -> void;                          // 无条件跳转，但保存返回地址
-    auto RTS() -> void;                          // jsr 后返回
-    auto RTI() -> void;                          // 中断后返回
-    auto BRK() -> void;                          // 强行中断，并跳转到 0xfffe
+    auto BMI() -> void { branch_if(r_stat_.N); }  // if (n) then branch
+    auto BPL() -> void { branch_if(!r_stat_.N); } // if (!n) then branch
+    auto BVS() -> void { branch_if(r_stat_.V); }  // if (v) then branch
+    auto BVC() -> void { branch_if(!r_stat_.V); } // if (!v) then branch
+    auto BEQ() -> void { branch_if(r_stat_.Z); }  // if (z) then branch
+    auto BNE() -> void { branch_if(!r_stat_.Z); } // if (!z) then branch
+    auto BCS() -> void { branch_if(r_stat_.C); }  // if (c) then branch
+    auto BCC() -> void { branch_if(!r_stat_.C); } // if (!c) then branch
+    auto JMP() -> void { r_pc_ = addr_; }         // 无条件跳转
+    auto JSR() -> void;                           // 无条件跳转，但保存返回地址
+    auto RTS() -> void { pull_pc(); }             // jsr 后返回
+    auto RTI() -> void;                           // 中断后返回
+    auto BRK() -> void;                           // 强行中断，并跳转到 0xfffe
 
     // 标志位控制
-    auto CLV() -> void { r_stat.V = 0; }
-    auto CLD() -> void { r_stat.D = 0; }
-    auto SED() -> void { r_stat.D = 1; }
-    auto CLI() -> void { r_stat.I = 0; }
-    auto SEI() -> void { r_stat.I = 1; }
-    auto CLC() -> void { r_stat.C = 0; }
-    auto SEC() -> void { r_stat.C = 1; }
+    auto CLV() -> void { r_stat_.V = 0; }
+    auto CLD() -> void { r_stat_.D = 0; }
+    auto SED() -> void { r_stat_.D = 1; }
+    auto CLI() -> void { r_stat_.I = 0; }
+    auto SEI() -> void { r_stat_.I = 1; }
+    auto CLC() -> void { r_stat_.C = 0; }
+    auto SEC() -> void { r_stat_.C = 1; }
 
     // 逻辑指令
     auto AND() -> void; // a &= fetched
@@ -110,19 +109,19 @@ class cpu {
 
     // 寻址
   public:
-    auto ABS() -> void { addr_abs = next_pc() | (next_pc() << 8); }             // absolute              add = mem[pc] | (mem[pc+1] << 8)
-    auto ABSX() -> void;                                                        // absolute x            add = abs + x
-    auto ABSY() -> void;                                                        // absolute y            add = abs + y
-    auto ACC() -> void {}                                                       // accumulator           none
-    auto IMM() -> void { addr_abs = r_pc++; }                                   // immediate             add = pc
-    auto IMP() -> void {}                                                       // implied               none
-    auto IND() -> void;                                                         // absolute indirect     add = mem[abs] | (mem[abs+1] << 8)
-    auto INDX() -> void;                                                        // indexed indirect x    add = mem[mem[pc] + x]
-    auto INDY() -> void;                                                        // indirect indexed y    add = mem[mem[pc]] + y
-    auto REL() -> void { *reinterpret_cast<uint8_t *>(&addr_off) = next_pc(); } // relative
-    auto ZP() -> void { addr_abs = next_pc(); }                                 // zero page             add = mem[pc]
-    auto ZPX() -> void { addr_abs = (next_pc() + r_x) & 0xff; }                 // zero page x           add = mem[pc] + x
-    auto ZPY() -> void { addr_abs = (next_pc() + r_y) & 0xff; }                 // zero page y           add = mem[pc] + y
+    auto ABS() -> void { addr_ = next_pc() | (next_pc() << 8); }            // absolute              add = mem[pc] | (mem[pc+1] << 8)
+    auto ABSX() -> void;                                                    // absolute x            add = abs + x
+    auto ABSY() -> void;                                                    // absolute y            add = abs + y
+    auto ACC() -> void {}                                                   // accumulator           none
+    auto IMM() -> void { addr_ = r_pc_++; }                                 // immediate             add = pc
+    auto IMP() -> void {}                                                   // implied               none
+    auto IND() -> void;                                                     // absolute indirect     add = mem[abs] | (mem[abs+1] << 8)
+    auto INDX() -> void;                                                    // indexed indirect x    add = mem[mem[pc] + x]
+    auto INDY() -> void;                                                    // indirect indexed y    add = mem[mem[pc]] + y
+    auto REL() -> void { *reinterpret_cast<uint8_t *>(&off_) = next_pc(); } // relative
+    auto ZP() -> void { addr_ = next_pc(); }                                // zero page             add = mem[pc]
+    auto ZPX() -> void { addr_ = (next_pc() + r_x_) & 0xff; }               // zero page x           add = mem[pc] + x
+    auto ZPY() -> void { addr_ = (next_pc() + r_y_) & 0xff; }               // zero page y           add = mem[pc] + y
 
   public:
     auto next_clock() -> void; // 执行一次时钟周期
@@ -134,31 +133,31 @@ class cpu {
   private:
     auto read(uint16_t addr) -> uint8_t;
     auto write(uint16_t addr, uint8_t data) -> void;
-    auto stack_push(uint8_t data) -> void;
-    auto stack_pull() -> uint8_t;
-    auto next_pc() -> uint8_t;
+    auto stack_push(uint8_t data) -> void { write(0x100 + (r_sp_--), data); }
+    auto stack_pull() -> uint8_t { return read(0x100 + (++r_sp_)); }
+    auto push_pc() -> void;
+    auto pull_pc() -> void { r_pc_ = stack_pull() | (stack_pull() << 8); }
+    auto push_stat() -> void { stack_push(*reinterpret_cast<uint8_t *>(&r_stat_)); }
+    auto pull_stat() -> void { *reinterpret_cast<uint8_t *>(&r_stat_) = stack_pull(); }
+    auto next_pc() -> uint8_t { return read(r_pc_++); }
     auto fetch() -> uint8_t;
-    auto do_branch(bool branch) -> void; // 转移
-    auto push_pc() -> void;              // 保存 pc
-    auto pull_pc() -> void;              // 读取 pc
-    auto push_stat() -> void;            // 保存 stat
-    auto pull_stat() -> void;            // 读取 stat
+    auto branch_if(bool cond) -> void;
 
     // 寄存器
   public:
-    uint8_t r_a{};
-    uint8_t r_x{};
-    uint8_t r_y{};
-    uint8_t r_sp{};
-    uint16_t r_pc{};
-    status_register r_stat;
+    uint8_t r_a_{};
+    uint8_t r_x_{};
+    uint8_t r_y_{};
+    uint8_t r_sp_{};
+    uint16_t r_pc_{};
+    status_register r_stat_;
 
-    auto a() -> uint8_t { return r_a; }
-    auto x() -> uint8_t { return r_x; }
-    auto y() -> uint8_t { return r_y; }
-    auto sp() -> uint8_t { return r_sp; }
-    auto pc() -> uint16_t { return r_pc; }
-    auto stat() -> status_register { return r_stat; }
+    auto a() -> uint8_t { return r_a_; }
+    auto x() -> uint8_t { return r_x_; }
+    auto y() -> uint8_t { return r_y_; }
+    auto sp() -> uint8_t { return r_sp_; }
+    auto pc() -> uint16_t { return r_pc_; }
+    auto stat() -> status_register { return r_stat_; }
 
     // 辅助函数
   public:
@@ -167,12 +166,13 @@ class cpu {
 
   private:
     bus &bus_;
-    uint32_t clock_count{}; // 时钟周期计数
-    uint8_t cycles{};       // 当前指令剩余执行周期
-    uint8_t opcode{};       // 当前指令
-    uint8_t fetched{};      // 读取的数据
-    int8_t addr_off{};      // 偏移
-    uint16_t addr_abs{};    // 绝对地址
+    uint32_t clocks_{}; // 时钟周期计数
+    uint8_t cycles_{};  // 当前指令剩余执行周期
+    uint8_t opcode_{};  // 当前指令
+    uint8_t fetched_{}; // 读取的数据
+    uint16_t addr_{};   // 地址
+    int8_t off_{};      // 偏移
+
   public:
     const static std::vector<instruction> inst_table; // 指令表
 };

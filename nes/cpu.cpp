@@ -1,395 +1,333 @@
 #include "bus.h"
+#include <format>
 #include <utility>
 
-cpu::cpu(bus &b)
-    : bus_(b) {
-}
-
 auto cpu::read(uint16_t addr) -> uint8_t {
-    return bus_.read(addr);
+    return bus_.cpu_bus_read(addr);
 }
 
 auto cpu::write(uint16_t addr, uint8_t data) -> void {
-    bus_.write(addr, data);
-}
-
-auto cpu::stack_push(uint8_t data) -> void {
-    write(0x100 + (r_sp--), data);
-}
-
-auto cpu::stack_pull() -> uint8_t {
-    return read(0x100 + (++r_sp));
-}
-
-auto cpu::next_pc() -> uint8_t {
-    return read(r_pc++);
+    bus_.cpu_bus_write(addr, data);
 }
 
 auto cpu::next_clock() -> void {
-    if (cycles == 0) {
-        opcode = next_pc();
-        cycles = inst_table[opcode].cycles;
-        (this->*inst_table[opcode].mod)();
-        (this->*inst_table[opcode].opt)();
+    if (cycles_ == 0) {
+        opcode_ = next_pc();
+        cycles_ = inst_table[opcode_].cycles;
+        (this->*inst_table[opcode_].mod)();
+        (this->*inst_table[opcode_].opt)();
     }
-    --cycles;
+    --cycles_;
 }
 
 auto cpu::next_inst() -> void {
-    opcode = next_pc();
-    (this->*inst_table[opcode].mod)();
-    (this->*inst_table[opcode].opt)();
+    opcode_ = next_pc();
+    (this->*inst_table[opcode_].mod)();
+    (this->*inst_table[opcode_].opt)();
 }
 
 auto cpu::reset() -> void {
-    r_a = 0;
-    r_x = 0;
-    r_y = 0;
-    r_sp = 0xfd;
-    *reinterpret_cast<uint8_t *>(&r_stat) = 0;
-    r_pc = (read(0xfffd) << 8) | read(0xfffc);
-    addr_abs = 0;
-    addr_off = 0;
-    fetched = 0;
-    cycles = 0;
+    r_a_ = 0;
+    r_x_ = 0;
+    r_y_ = 0;
+    r_sp_ = 0xfd;
+    *reinterpret_cast<uint8_t *>(&r_stat_) = 0;
+    r_pc_ = (read(0xfffd) << 8) | read(0xfffc);
+    addr_ = 0;
+    off_ = 0;
+    fetched_ = 0;
+    cycles_ = 0;
 }
 
 auto cpu::irq() -> void {
-    if (r_stat.I == 0) {
+    if (r_stat_.I == 0) {
         push_pc();
         push_stat();
-        r_stat.B = 0;
-        r_stat.I = 1;
-        r_pc = read(0xfffe) | (read(0xffff) << 8);
-        cycles = 7;
+        r_stat_.B = 0;
+        r_stat_.I = 1;
+        r_pc_ = read(0xfffe) | (read(0xffff) << 8);
+        cycles_ = 7;
     }
 }
 
 auto cpu::nmi() -> void {
     push_pc();
     push_stat();
-    r_stat.B = 0;
-    r_stat.I = 1;
-    r_pc = read(0xfffa) | (read(0xfffb) << 8);
-    cycles = 8;
+    r_stat_.B = 0;
+    r_stat_.I = 1;
+    r_pc_ = read(0xfffa) | (read(0xfffb) << 8);
+    cycles_ = 8;
 }
 
 auto cpu::fetch() -> uint8_t {
-    if (inst_table[opcode].mod == &cpu::ACC) {
-        return r_a;
+    if (inst_table[opcode_].mod == &cpu::ACC) {
+        return r_a_;
     }
-    return fetched = read(addr_abs);
+    return fetched_ = read(addr_);
 }
 
-auto cpu::do_branch(bool branch) -> void {
-    if (branch) {
-        cycles += 1;
-        r_pc += addr_off;
+auto cpu::branch_if(bool cond) -> void {
+    if (cond) {
+        cycles_ += 1;
+        r_pc_ += off_;
     }
 }
 
 auto cpu::push_pc() -> void {
-    stack_push((r_pc >> 8) & 0xff);
-    stack_push(r_pc & 0xff);
+    stack_push((r_pc_ >> 8) & 0xff);
+    stack_push(r_pc_ & 0xff);
 }
 
-auto cpu::pull_pc() -> void {
-    r_pc = stack_pull() | (stack_pull() << 8);
-}
-
-auto cpu::push_stat() -> void {
-    stack_push(*reinterpret_cast<uint8_t *>(&r_stat));
-}
-
-auto cpu::pull_stat() -> void {
-    *reinterpret_cast<uint8_t *>(&r_stat) = stack_pull();
-}
-
-// add = abs + r_x
 auto cpu::ABSX() -> void {
     auto lo = next_pc();
     auto hi = next_pc();
-    addr_abs = (lo | (hi << 8)) + r_x;
+    addr_ = (lo | (hi << 8)) + r_x_;
 }
 
-// add = abs + r_x
 auto cpu::ABSY() -> void {
-    auto lo = read(r_pc++);
-    auto hi = read(r_pc++);
-    addr_abs = (lo | (hi << 8)) + r_y;
+    auto lo = read(r_pc_++);
+    auto hi = read(r_pc_++);
+    addr_ = (lo | (hi << 8)) + r_y_;
 }
 
 auto cpu::IND() -> void {
-    addr_abs = next_pc() | (next_pc() << 8);
-    addr_abs = read(addr_abs) | (read(addr_abs + 1) << 8);
+    addr_ = next_pc() | (next_pc() << 8);
+    addr_ = read(addr_) | (read(addr_ + 1) << 8);
 }
 
 auto cpu::INDX() -> void {
-    addr_abs = (next_pc() + r_x) & 0xff;
-    addr_abs = read(addr_abs) | (read(addr_abs + 1) << 8);
+    addr_ = (next_pc() + r_x_) & 0xff;
+    addr_ = read(addr_) | (read(addr_ + 1) << 8);
 }
 
 auto cpu::INDY() -> void {
-    addr_abs = next_pc();
-    addr_abs = read(addr_abs) | (read(addr_abs + 1) << 8) + r_y;
+    addr_ = next_pc();
+    addr_ = read(addr_) | (read(addr_ + 1) << 8) + r_y_;
 }
 
 auto cpu::ADC() -> void {
-    const uint16_t tmp = static_cast<uint16_t>(r_a) + fetch() + r_stat.C;
-    r_stat.N = tmp & 0x80;
-    r_stat.V = ~(static_cast<uint16_t>(r_a) ^ fetched) & ((r_a ^ tmp) & 0x80);
-    r_stat.Z = r_a == 0;
-    r_stat.C = tmp > 255;
-    r_a = tmp & 0xff;
+    const uint16_t tmp = static_cast<uint16_t>(r_a_) + fetch() + r_stat_.C;
+    r_stat_.N = tmp & 0x80;
+    r_stat_.V = ~(static_cast<uint16_t>(r_a_) ^ fetched_) & ((r_a_ ^ tmp) & 0x80);
+    r_stat_.Z = r_a_ == 0;
+    r_stat_.C = tmp > 255;
+    r_a_ = tmp & 0xff;
 }
 
 auto cpu::AND() -> void {
-    r_a &= fetch();
-    r_stat.N = r_a & 0x80;
-    r_stat.Z = r_a == 0;
+    r_a_ &= fetch();
+    r_stat_.N = r_a_ & 0x80;
+    r_stat_.Z = r_a_ == 0;
 }
 
 auto cpu::ASL() -> void {
     const uint16_t tmp = fetch() << 1;
-    r_stat.N = tmp & 0x80;
-    r_stat.Z = (tmp & 0xff) == 0;
-    r_stat.C = tmp & 0xff00;
-    if (inst_table[opcode].mod == &cpu::ACC) {
-        r_a = tmp & 0xff;
+    r_stat_.N = tmp & 0x80;
+    r_stat_.Z = (tmp & 0xff) == 0;
+    r_stat_.C = tmp & 0xff00;
+    if (inst_table[opcode_].mod == &cpu::ACC) {
+        r_a_ = tmp & 0xff;
     } else {
-        write(addr_abs, tmp & 0xff);
+        write(addr_, tmp & 0xff);
     }
 }
 
 auto cpu::BIT() -> void {
-    r_stat.N = (fetch() >> 7) & 0x1;
-    r_stat.V = (fetched >> 6) & 0x1;
-    r_stat.Z = (fetched & r_a) == 0;
+    r_stat_.N = (fetch() >> 7) & 0x1;
+    r_stat_.V = (fetched_ >> 6) & 0x1;
+    r_stat_.Z = (fetched_ & r_a_) == 0;
 }
 
 auto cpu::BRK() -> void {
-    stack_push(r_pc);
-    r_pc = 0xfffe;
-    r_stat.B = 1;
+    stack_push(r_pc_);
+    r_pc_ = 0xfffe;
+    r_stat_.B = 1;
 }
 
-// flags: nzc
 auto cpu::CMP() -> void {
-    const uint16_t tmp = static_cast<uint16_t>(r_a) - fetch();
-    r_stat.N = tmp & 0x80;
-    r_stat.Z = tmp == 0;
-    r_stat.C = r_a >= fetched;
+    const uint16_t tmp = static_cast<uint16_t>(r_a_) - fetch();
+    r_stat_.N = tmp & 0x80;
+    r_stat_.Z = tmp == 0;
+    r_stat_.C = r_a_ >= fetched_;
 }
 
-// flags: nzc
 auto cpu::CPX() -> void {
-    const uint16_t tmp = static_cast<uint16_t>(r_x) - fetch();
-    r_stat.N = tmp & 0x80;
-    r_stat.Z = tmp == 0;
-    r_stat.C = r_x >= fetched;
+    const uint16_t tmp = static_cast<uint16_t>(r_x_) - fetch();
+    r_stat_.N = tmp & 0x80;
+    r_stat_.Z = tmp == 0;
+    r_stat_.C = r_x_ >= fetched_;
 }
 
-// flags: nzc
 auto cpu::CPY() -> void {
-    const uint16_t tmp = static_cast<uint16_t>(r_y) - fetch();
-    r_stat.N = tmp & 0x80;
-    r_stat.Z = tmp == 0;
-    r_stat.C = r_y >= fetched;
+    const uint16_t tmp = static_cast<uint16_t>(r_y_) - fetch();
+    r_stat_.N = tmp & 0x80;
+    r_stat_.Z = tmp == 0;
+    r_stat_.C = r_y_ >= fetched_;
 }
 
-// flags: nz
 auto cpu::DEC() -> void {
     const uint8_t tmp = fetch() - 1;
-    r_stat.N = tmp & 0x80;
-    r_stat.Z = tmp == 0;
-    write(addr_abs, tmp & 0xff);
+    r_stat_.N = tmp & 0x80;
+    r_stat_.Z = tmp == 0;
+    write(addr_, tmp & 0xff);
 }
 
-// flags: nz
 auto cpu::DEX() -> void {
-    const uint8_t tmp = r_x - 1;
-    r_stat.N = tmp & 0x80;
-    r_stat.Z = tmp == 0;
-    write(addr_abs, tmp & 0xff);
+    const uint8_t tmp = r_x_ - 1;
+    r_stat_.N = tmp & 0x80;
+    r_stat_.Z = tmp == 0;
+    write(addr_, tmp & 0xff);
 }
 
-// flags: nz
 auto cpu::DEY() -> void {
-    const uint8_t tmp = r_y - 1;
-    r_stat.N = tmp & 0x80;
-    r_stat.Z = tmp == 0;
-    write(addr_abs, tmp & 0xff);
+    const uint8_t tmp = r_y_ - 1;
+    r_stat_.N = tmp & 0x80;
+    r_stat_.Z = tmp == 0;
+    write(addr_, tmp & 0xff);
 }
 
-// flags: nz
 auto cpu::EOR() -> void {
-    r_a ^= fetch();
-    r_stat.N = r_a & 0x80;
-    r_stat.Z = r_a == 0;
+    r_a_ ^= fetch();
+    r_stat_.N = r_a_ & 0x80;
+    r_stat_.Z = r_a_ == 0;
 }
 
-// flags: nz
 auto cpu::INC() -> void {
     const uint8_t tmp = fetch() + 1;
-    r_stat.N = tmp & 0x80;
-    r_stat.Z = tmp == 0;
-    write(addr_abs, tmp);
+    r_stat_.N = tmp & 0x80;
+    r_stat_.Z = tmp == 0;
+    write(addr_, tmp);
 }
 
-// flags: nz
 auto cpu::INX() -> void {
-    r_x += 1;
-    r_stat.N = r_x & 0x80;
-    r_stat.Z = r_x == 0;
+    r_x_ += 1;
+    r_stat_.N = r_x_ & 0x80;
+    r_stat_.Z = r_x_ == 0;
 }
 
-// flags: nz
 auto cpu::INY() -> void {
-    r_y += 1;
-    r_stat.N = r_y & 0x80;
-    r_stat.Z = r_y == 0;
+    r_y_ += 1;
+    r_stat_.N = r_y_ & 0x80;
+    r_stat_.Z = r_y_ == 0;
 }
 
-// flags: none
 auto cpu::JSR() -> void {
-    r_pc -= 1;
     push_pc();
-    r_pc = addr_abs;
+    r_pc_ = addr_;
 }
 
-// flags: nz
 auto cpu::LDA() -> void {
-    r_a = fetch();
-    r_stat.N = r_a & 0x80;
-    r_stat.Z = r_a == 0;
+    r_a_ = fetch();
+    r_stat_.N = r_a_ & 0x80;
+    r_stat_.Z = r_a_ == 0;
 }
 
-// flags: nz
 auto cpu::LDX() -> void {
-    r_x = fetch();
-    r_stat.N = r_x & 0x80;
-    r_stat.Z = r_x == 0;
+    r_x_ = fetch();
+    r_stat_.N = r_x_ & 0x80;
+    r_stat_.Z = r_x_ == 0;
 }
 
-// flags: nz
 auto cpu::LDY() -> void {
-    r_y = fetch();
-    r_stat.N = r_y & 0x80;
-    r_stat.Z = r_y == 0;
+    r_y_ = fetch();
+    r_stat_.N = r_y_ & 0x80;
+    r_stat_.Z = r_y_ == 0;
 }
 
-// flags: nzc
 auto cpu::LSR() -> void {
     uint16_t tmp = fetch();
-    r_stat.C = tmp & 0x1;
+    r_stat_.C = tmp & 0x1;
     tmp >>= 1;
-    r_stat.N = tmp & 0x80;
-    r_stat.Z = tmp == 0;
-    if (inst_table[opcode].mod == &cpu::ACC) {
-        r_a = tmp & 0xff;
+    r_stat_.N = tmp & 0x80;
+    r_stat_.Z = tmp == 0;
+    if (inst_table[opcode_].mod == &cpu::ACC) {
+        r_a_ = tmp & 0xff;
     } else {
-        write(addr_abs, tmp & 0xff);
+        write(addr_, tmp & 0xff);
     }
 }
 
-// flags: nz
 auto cpu::ORA() -> void {
-    r_a |= fetch();
-    r_stat.N = r_a & 0x80;
-    r_stat.Z = r_a == 0;
+    r_a_ |= fetch();
+    r_stat_.N = r_a_ & 0x80;
+    r_stat_.Z = r_a_ == 0;
 }
 
-// flags: nz
 auto cpu::PLA() -> void {
-    r_a = stack_pull();
-    r_stat.N = r_a & 0x80;
-    r_stat.Z = r_a == 0;
+    r_a_ = stack_pull();
+    r_stat_.N = r_a_ & 0x80;
+    r_stat_.Z = r_a_ == 0;
 }
 
-// flags: nzc
 auto cpu::ROL() -> void {
-    const uint16_t tmp = (fetch() << 1) + r_stat.C;
-    r_stat.N = tmp & 0x80;
-    r_stat.Z = tmp == 0;
-    r_stat.C = tmp & 0xff00;
-    if (inst_table[opcode].mod == &cpu::ACC) {
-        r_a = tmp;
+    const uint16_t tmp = (fetch() << 1) + r_stat_.C;
+    r_stat_.N = tmp & 0x80;
+    r_stat_.Z = tmp == 0;
+    r_stat_.C = tmp & 0xff00;
+    if (inst_table[opcode_].mod == &cpu::ACC) {
+        r_a_ = tmp;
     } else {
-        write(addr_abs, tmp);
+        write(addr_, tmp);
     }
 }
 
-// flags: nzc
 auto cpu::ROR() -> void {
-    const uint16_t tmp = (fetch() >> 1) | (r_stat.C << 7);
-    r_stat.N = tmp & 0x80;
-    r_stat.Z = tmp == 0;
-    r_stat.C = tmp & 0x1;
-    if (inst_table[opcode].mod == &cpu::ACC) {
-        r_a = tmp;
+    const uint16_t tmp = (fetch() >> 1) | (r_stat_.C << 7);
+    r_stat_.N = tmp & 0x80;
+    r_stat_.Z = tmp == 0;
+    r_stat_.C = tmp & 0x1;
+    if (inst_table[opcode_].mod == &cpu::ACC) {
+        r_a_ = tmp;
     } else {
-        write(addr_abs, tmp);
+        write(addr_, tmp);
     }
 }
 
-// flags: all
 auto cpu::RTI() -> void {
     pull_stat();
-    r_stat.B = ~r_stat.B;
-    r_stat.I = ~r_stat.I;
+    r_stat_.B = ~r_stat_.B;
+    r_stat_.I = ~r_stat_.I;
     pull_pc();
 }
 
-// flags: none
-auto cpu::RTS() -> void {
-    pull_pc();
-    r_pc += 1;
-}
-
-// flags: nvzc
 auto cpu::SBC() -> void {
     const uint16_t val = fetch() ^ 0xff;
-    const uint16_t tmp = r_a + val + r_stat.C;
-    r_stat.N = tmp & 0x80;
-    r_stat.V = (tmp ^ r_a) & ((tmp ^ val) & 0x80);
-    r_stat.Z = (tmp & 0xff) == 0;
-    r_stat.C = tmp & 0xff00;
-    r_a = tmp & 0xff;
+    const uint16_t tmp = r_a_ + val + r_stat_.C;
+    r_stat_.N = tmp & 0x80;
+    r_stat_.V = (tmp ^ r_a_) & ((tmp ^ val) & 0x80);
+    r_stat_.Z = (tmp & 0xff) == 0;
+    r_stat_.C = tmp & 0xff00;
+    r_a_ = tmp & 0xff;
 }
 
-// flags: nz
 auto cpu::TAX() -> void {
-    r_x = r_a;
-    r_stat.N = r_x & 0x80;
-    r_stat.Z = r_x == 0;
+    r_x_ = r_a_;
+    r_stat_.N = r_x_ & 0x80;
+    r_stat_.Z = r_x_ == 0;
 }
 
-// flags: nz
 auto cpu::TAY() -> void {
-    r_y = r_a;
-    r_stat.N = r_y & 0x80;
-    r_stat.Z = r_y == 0;
+    r_y_ = r_a_;
+    r_stat_.N = r_y_ & 0x80;
+    r_stat_.Z = r_y_ == 0;
 }
 
-// flags: nz
 auto cpu::TSX() -> void {
-    r_x = r_sp;
-    r_stat.N = r_x & 0x80;
-    r_stat.Z = r_x == 0;
+    r_x_ = r_sp_;
+    r_stat_.N = r_x_ & 0x80;
+    r_stat_.Z = r_x_ == 0;
 }
 
-// flags: nz
 auto cpu::TXA() -> void {
-    r_a = r_x;
-    r_stat.N = r_a & 0x80;
-    r_stat.Z = r_a == 0;
+    r_a_ = r_x_;
+    r_stat_.N = r_a_ & 0x80;
+    r_stat_.Z = r_a_ == 0;
 }
 
-// flags: nz
 auto cpu::TYA() -> void {
-    r_a = r_y;
-    r_stat.N = r_a & 0x80;
-    r_stat.Z = r_a == 0;
+    r_a_ = r_y_;
+    r_stat_.N = r_a_ & 0x80;
+    r_stat_.Z = r_a_ == 0;
 }
 
 auto cpu::inst_len(const instruction &inst) -> int {

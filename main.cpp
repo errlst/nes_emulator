@@ -22,7 +22,6 @@ auto main() -> int {
         ImGui::NewFrame();
         glClear(GL_COLOR_BUFFER_BIT);
 
-        cpu_emulator();
 
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());

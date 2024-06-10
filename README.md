@@ -3,8 +3,9 @@
 
 目前正在开发阶段。
 
-主要参考：https://github.com/OneLoneCoder/olcNES。
-
+主要参考：
+https://github.com/OneLoneCoder/olcNES
+https://www.nesdev.org/wiki/NES_reference_guide
 
 #### 项目结构
 ```
